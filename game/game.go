@@ -12,10 +12,10 @@ import (
 	"time"
 )
 
-func StartGame(ip string, port int, quiet bool, debug bool) {
+func StartGame(ip string, port int, quiet bool, debug bool, done chan<- string) {
 	ch := make(chan string)
 	go loop(ch, debug)
-	bindAndListen(ip, port, ch, quiet)
+	bindAndListen(ip, port, ch, quiet, done)
 }
 
 func loop(ch <-chan string, debug bool) {
@@ -56,12 +56,18 @@ func handleConnection(conn net.Conn, ch chan<- string, quiet bool) {
 	ch <- buf.String()
 }
 
-func bindAndListen(ip string, port int, ch chan<- string, quiet bool) {
+func bindAndListen(ip string,
+	port int,
+	ch chan<- string,
+	quiet bool,
+	done chan<- string) {
+	
 	binding := ip + ":" + strconv.Itoa(port)
 	listener, err := net.Listen("tcp", binding)
 	if err != nil {
 		panic(err)
 	}
+	done <- "done"
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
