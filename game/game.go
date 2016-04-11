@@ -1,27 +1,63 @@
 package game
 
 import (
+	"bytes"
 	"fmt"
 //	"github.com/gragas/jabberwock-server/inventory"
 //	"github.com/gragas/jabberwock-server/entity"
+	"io"
 	"net"
 	"strconv"
-	"sync"
+	"time"
 )
 
-func StartGame(ip string, port int) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	
-	go bindAndListen(ip, port)
-	wg.Wait()
+const (
+	ticksPerSecond = 1
+)
+
+func StartGame(ip string, port int, quiet bool, debug bool) {
+	ch := make(chan string)
+	go loop(ch, debug)
+	bindAndListen(ip, port, ch, quiet)
 }
 
-func handleConnection(conn net.Conn) {
-	fmt.Printf("Accepted connection from %v\n", conn.RemoteAddr())
+func loop(ch <-chan string, debug bool) {
+	for { // inifinite loop
+		startTime := time.Now()
+		
+		select {
+		case msg := <- ch:
+			handleMessage(msg, debug)
+		default:
+			if debug {
+				fmt.Printf("Nothing received!\n")
+			}
+		}
+
+		endTime := time.Now()
+		elapsedTime := endTime.Sub(startTime)
+		if elapsedTime < ticksPerSecond * 1e9 {
+			time.Sleep(ticksPerSecond * 1e9 - elapsedTime)
+		}
+	}
 }
 
-func bindAndListen(ip string, port int) {
+func handleMessage(msg string, debug bool) {
+	if debug {
+		fmt.Printf("%s\n", msg)
+	}
+}
+
+func handleConnection(conn net.Conn, ch chan<- string, quiet bool) {
+	if !quiet {
+		fmt.Printf("Accepted connection from %v\n", conn.RemoteAddr())
+	}
+	var buf bytes.Buffer
+	io.Copy(&buf, conn)
+	ch <- buf.String()
+}
+
+func bindAndListen(ip string, port int, ch chan<- string, quiet bool) {
 	binding := ip + ":" + strconv.Itoa(port)
 	listener, err := net.Listen("tcp", binding)
 	if err != nil {
@@ -32,6 +68,6 @@ func bindAndListen(ip string, port int) {
 		if err != nil {
 			panic(err)
 		}
-		go handleConnection(conn)
+		go handleConnection(conn, ch, quiet)
 	}
 }
