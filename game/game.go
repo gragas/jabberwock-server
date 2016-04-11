@@ -5,14 +5,11 @@ import (
 	"fmt"
 //	"github.com/gragas/jabberwock-server/inventory"
 //	"github.com/gragas/jabberwock-server/entity"
+	"github.com/gragas/jabberwock-lib/consts"
 	"io"
 	"net"
 	"strconv"
 	"time"
-)
-
-const (
-	ticksPerSecond = 1
 )
 
 func StartGame(ip string, port int, quiet bool, debug bool) {
@@ -22,7 +19,7 @@ func StartGame(ip string, port int, quiet bool, debug bool) {
 }
 
 func loop(ch <-chan string, debug bool) {
-	for { // inifinite loop
+	for {
 		startTime := time.Now()
 		
 		select {
@@ -34,10 +31,12 @@ func loop(ch <-chan string, debug bool) {
 			}
 		}
 
+		// do stuff
+
 		endTime := time.Now()
 		elapsedTime := endTime.Sub(startTime)
-		if elapsedTime < ticksPerSecond * 1e9 {
-			time.Sleep(ticksPerSecond * 1e9 - elapsedTime)
+		if elapsedTime < consts.TicksPerFrame {
+			time.Sleep(consts.TicksPerFrame - elapsedTime)
 		}
 	}
 }
