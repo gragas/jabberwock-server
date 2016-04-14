@@ -26,7 +26,7 @@ func loop(ch chan string, debug bool) {
 			handleMessage(msg, ch, debug)
 		default:
 			if debug {
-				fmt.Printf("Nothing received!\n")
+				// fmt.Printf("Nothing received!\n")
 			}
 		}
 
@@ -42,30 +42,31 @@ func loop(ch chan string, debug bool) {
 
 func registerClient(ch chan string, debug bool) {
 	if debug {
-		fmt.Printf("Registering client...\n")
+		fmt.Printf("SERVER: Registering client...\n")
 	}
 	ch <- "SUCCESS_\n"
 }
 
 func handleMessage(msg string, ch chan string, debug bool) {
 	if debug {
-		fmt.Printf("Received msg: %s\n", msg)
+		fmt.Printf("SERVER: Received msg: %s\n", msg)
 	}
 	switch msg[:8] {
 	case "REGISTER":
 		registerClient(ch, debug)
 	default:
-		fmt.Printf("Unknown command: %s\n", msg)
+		fmt.Printf("SERVER: Received unknown command: %s\n", msg)
+		ch <- msg
 	}
 }
 
 func handleConnection(conn net.Conn, ch chan string, handled chan int, quiet bool) {
 	if !quiet {
-		fmt.Printf("Accepted connection from %v\n", conn.RemoteAddr())
+		fmt.Printf("SERVER: Accepted connection from %v\n", conn.RemoteAddr())
 	}
 	msg, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		fmt.Printf("Bad message from %v\n", conn.RemoteAddr())
+		fmt.Printf("SERVER: Bad message from %v\n", conn.RemoteAddr())
 		return
 	}
 	ch <- msg[:len(msg)-1]
@@ -94,7 +95,7 @@ func bindAndListen(ip string,
 		<-handled
 		serverResponse := <-ch
 		if !quiet {
-			fmt.Printf("Writing %s in response\n", serverResponse[:8])
+			fmt.Printf("SERVER: Writing %s in response\n", serverResponse[:8])
 		}
 		fmt.Fprintf(conn, serverResponse)
 	}
