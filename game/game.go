@@ -2,10 +2,12 @@ package game
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 //	"github.com/gragas/jabberwock-server/inventory"
 //	"github.com/gragas/jabberwock-server/entity"
 	"github.com/gragas/jabberwock-lib/consts"
+	"github.com/gragas/jabberwock-lib/protocol"
 	"net"
 	"strconv"
 	"time"
@@ -44,18 +46,29 @@ func registerClient(ch chan string, debug bool) {
 	if debug {
 		fmt.Printf("SERVER: Registering client...\n")
 	}
-	ch <- "SUCCESS_\n"
+	ch <- string(protocol.Success) + "\n"
 }
 
 func handleMessage(msg string, ch chan string, debug bool) {
-	if debug {
-		fmt.Printf("SERVER: Received msg: %s\n", msg)
+	if len(msg) < 1 {
+		fmt.Printf("SERVER: Received malformed message.\n")
+		ch <- msg
+		return
 	}
-	switch msg[:8] {
-	case "REGISTER":
+	var str string
+	if len(msg) == 1 {
+		str = protocol.Code(msg[0]).String()
+	} else {
+		str = protocol.Code(msg[0]).String() + msg[1:]
+	}
+	if debug {
+		fmt.Printf("SERVER: Received msg: %s\n", str)
+	}
+	switch protocol.Code(msg[0]) {
+	case protocol.Register:
 		registerClient(ch, debug)
 	default:
-		fmt.Printf("SERVER: Received unknown command: %s\n", msg)
+		fmt.Printf("SERVER: Received unknown command: %s\n", str)
 		ch <- msg
 	}
 }
@@ -94,8 +107,12 @@ func bindAndListen(ip string,
 		go handleConnection(conn, ch, handled, quiet)
 		<-handled
 		serverResponse := <-ch
+		if len(serverResponse) < 2 {
+			panic(errors.New("SERVER: Malformed server response.\n"))
+		}
 		if !quiet {
-			fmt.Printf("SERVER: Writing %s in response\n", serverResponse[:8])
+			fmt.Printf("SERVER: Writing '%s' in response\n",
+				protocol.Code(serverResponse[0]).String() + serverResponse[1:len(serverResponse)-1])
 		}
 		fmt.Fprintf(conn, serverResponse)
 	}
