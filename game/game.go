@@ -2,6 +2,7 @@ package game
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gragas/jabberwock-lib/consts"
@@ -16,7 +17,9 @@ import (
 
 var entityID uint64
 var entityIDMutex *sync.Mutex
-var players []player.Player
+var entities []entity.Entity
+var players []*player.Player
+var connections []net.Conn
 
 func generateEntityID(debug bool) uint64 {
 	entityIDMutex.Lock()
@@ -28,21 +31,22 @@ func generateEntityID(debug bool) uint64 {
 	return entityID
 }
 
-func StartGame(ip string, port int, quiet bool, debug bool, done chan<- string) {
+func StartGame(ip string, port int, quiet bool, debug bool, done chan bool) {
 	entityID = uint64(protocol.GenerateEntityID)
 	entityIDMutex = &sync.Mutex{}
-	ch := make(chan string)
-	go loop(ch, debug)
-	bindAndListen(ip, port, ch, quiet, done)
+	listenToLoop := make(chan string)
+	loopToListen := make(chan string)
+	go loop(listenToLoop, loopToListen, debug)
+	bindAndListen(ip, port, listenToLoop, loopToListen, quiet, done)
 }
 
-func loop(ch chan string, debug bool) {
+func loop(listenToLoop <-chan string, loopToListen chan<- string, debug bool) {
 	for {
 		startTime := time.Now()
 
 		select {
-		case msg := <-ch:
-			handleMessage(msg, ch, debug)
+		case msg := <-listenToLoop:
+			handleMessage(msg, loopToListen, debug)
 		default:
 			/* if debug {
 			 *	fmt.Printf("Nothing received!\n")
@@ -51,6 +55,7 @@ func loop(ch chan string, debug bool) {
 		}
 
 		update(debug)
+		broadcast(generateBroadcastString())
 
 		endTime := time.Now()
 		elapsedTime := endTime.Sub(startTime)
@@ -61,33 +66,70 @@ func loop(ch chan string, debug bool) {
 }
 
 func update(debug bool) {
-	if debug {
-		
+	for _, e := range entities {
+		e.Update()
 	}
 }
 
-func registerClient(ch chan string, player player.Player, debug bool) {
+func broadcast(msg string) {
+	for _, conn := range connections {
+		// fmt.Printf("SERVER: Sending data to %v\n", conn.RemoteAddr())
+		fmt.Fprintf(conn, msg)
+	}
+}
+
+func generateBroadcastString() string {
+	pBytes, err := json.Marshal(players)
+	if err != nil {
+		panic(err)
+	}
+	return string(protocol.UpdatePlayers) + string(pBytes) + string(protocol.EndOfMessage)
+}
+
+func registerClient(loopToListen chan<- string, p *player.Player, debug bool) {
 	if debug {
 		fmt.Printf("SERVER: Registering client...\n")
 	}
-	player.ID = generateEntityID(debug)
-	players = append(players, player)
+	p.SetID(generateEntityID(debug))
+	entities = append(entities, p)
+	players = append(players, p)
 	if debug {
-		fmt.Printf("SERVER: New players state: %v\n", players)
+		fmt.Printf("SERVER: New entities state: %v\n", entities)
 	}
-	ch <- string(protocol.Success) + string(protocol.EndOfMessage)
+	loopToListen <- string(protocol.Success) + p.String() + string(protocol.EndOfMessage)
 }
 
-func handleMessage(msg string, ch chan string, debug bool) {
-	malformedMessage := func(ch chan string) {
+func extractID(msg string) uint64 {
+	var index int
+	var ok bool
+	for i, c := range msg[1:] {
+		if byte(c) != '_' {
+			index = i+1
+			ok = true
+			break
+		}
+	}
+	if !ok || index >= len(msg)-1 {
+		fmt.Println("msg:", msg)
+		panic(errors.New("msg does not contain an ID.\n"))
+	}
+	ID, err := strconv.ParseUint(msg[index:len(msg)-1], 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return ID
+}
+
+func handleMessage(msg string, loopToListen chan<- string, debug bool) {
+	malformedMessage := func(loopToListen chan<- string) {
 		fmt.Printf("SERVER: Received malformed message.\n")
-		ch <- msg
+		loopToListen <- msg
 	}
 
 	var str string
 	var long bool
 	if len(msg) < 1 {
-		malformedMessage(ch)
+		malformedMessage(loopToListen)
 		return
 	} else if len(msg) == 1 {
 		str = protocol.Code(msg[0]).String()
@@ -96,63 +138,156 @@ func handleMessage(msg string, ch chan string, debug bool) {
 		long = true
 	}
 	if debug {
-		fmt.Printf("SERVER: Received msg: %s\n", str)
+		// fmt.Printf("SERVER: Received msg: %s\n", str)
+	}
+	if !long {
+		malformedMessage(loopToListen)
+		return
 	}
 	switch protocol.Code(msg[0]) {
 	case protocol.Register:
-		if !long {
-			malformedMessage(ch)
-			return
-		}
-		entity, err := entity.FromBytes([]byte(msg[1:]))
+		var p player.Player
+		err := p.FromBytes([]byte(msg[1:]))
 		if err != nil {
-			malformedMessage(ch)
+			malformedMessage(loopToListen)
 			return
 		}
-		player := player.Player{Entity: *entity}
-		registerClient(ch, player, debug)
+		registerClient(loopToListen, &p, debug)
+	case protocol.EntityStartMoveRight:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StartMoveLocal(e, entity.Right)
+				break
+			}
+		}
+	case protocol.EntityStopMoveRight:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StopMoveLocal(e, entity.Right)
+				break
+			}
+		}
+	case protocol.EntityStartMoveLeft:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StartMoveLocal(e, entity.Left)
+				break
+			}
+		}
+	case protocol.EntityStopMoveLeft:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StopMoveLocal(e, entity.Left)
+				break
+			}
+		}
+	case protocol.EntityStartMoveUp:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StartMoveLocal(e, entity.Up)
+				break
+			}
+		}
+	case protocol.EntityStopMoveUp:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StopMoveLocal(e, entity.Up)
+				break
+			}
+		}
+	case protocol.EntityStartMoveDown:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StartMoveLocal(e, entity.Down)
+				break
+			}
+		}
+	case protocol.EntityStopMoveDown:
+		ID := extractID(msg)
+		// Make this a hashmap
+		for _, e := range entities {
+			if e.GetID() == ID {
+				entity.StopMoveLocal(e, entity.Down)
+				break
+			}
+		}
 	default:
 		fmt.Printf("SERVER: Received unknown command: %s\n", str)
-		ch <- msg
+		loopToListen <- msg
 	}
 }
 
-func handleConnection(conn net.Conn, ch chan string, handled chan int, quiet bool) {
+func handleConnection(conn net.Conn, listenToLoop chan<- string, quiet bool) (string, error) {
 	if !quiet {
 		fmt.Printf("SERVER: Accepted connection from %v\n", conn.RemoteAddr())
 	}
 	msg, err := bufio.NewReader(conn).ReadString(byte(protocol.EndOfMessage))
 	if err != nil {
 		fmt.Printf("SERVER: Bad message from %v\n", conn.RemoteAddr())
-		return
+		fmt.Printf("msg: %v\n", msg)
+		return "", err
 	}
-	ch <- msg[:len(msg)-1]
-	handled <- 0
+	go func() {
+		for {
+			msg, err := bufio.NewReader(conn).ReadString(byte(protocol.EndOfMessage))
+			if err != nil {
+				fmt.Printf("SERVER: Client %v disconnected.\n", conn.RemoteAddr())
+				// remove the connection
+				var index int
+				for i, c := range connections {
+					if c == conn {
+						index = i
+						break
+					}
+				}
+				if index+1 < len(connections) {
+					connections = append(connections[:index], connections[index+1:]...)
+				} else {
+					connections = connections[:len(connections)-1]
+				}
+				return
+			}
+			listenToLoop <- msg
+		}
+	}()
+	return msg[:len(msg)-1], nil
 }
 
-func bindAndListen(ip string,
-	port int,
-	ch chan string,
-	quiet bool,
-	done chan<- string) {
+func bindAndListen(ip string, port int, listenToLoop chan<- string, loopToListen <-chan string,
+	quiet bool, done chan bool) {
 
 	binding := ip + ":" + strconv.Itoa(port)
 	listener, err := net.Listen("tcp", binding)
 	if err != nil {
 		panic(err)
 	}
-	done <- "done"
+	done <- true
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			panic(err)
 		}
-		handled := make(chan int)
-		go handleConnection(conn, ch, handled, quiet)
-		<-handled
-		serverResponse := <-ch
-		if len(serverResponse) < 2 {
-			panic(errors.New("SERVER: Malformed server response.\n"))
+		connections = append(connections, conn)
+		clientMessage, err := handleConnection(conn, listenToLoop, quiet)
+		listenToLoop <- clientMessage
+		serverResponse := <-loopToListen
+		if err != nil || len(serverResponse) < 2 {
+			fmt.Fprintf(conn, string(protocol.BadMessageError)+string(protocol.EndOfMessage))
+			return
 		}
 		if !quiet {
 			fmt.Printf("SERVER: Writing '%s' in response\n",
