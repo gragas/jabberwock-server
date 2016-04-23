@@ -3,7 +3,6 @@ package game
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/gragas/jabberwock-lib/consts"
 	"github.com/gragas/jabberwock-lib/entity"
@@ -19,18 +18,20 @@ var entityID uint64
 var entityIDMutex *sync.Mutex
 var entities map[uint64]entity.Entity
 var players map[uint64]*player.Player
+var jsonPlayers map[string]*player.Player
 var connections []net.Conn
 
-func StartGame(ip string, port int, quiet bool, debug bool, done chan bool) {
+func StartGame(ip string, port int, quiet bool, debug bool, dedicated bool, done chan bool) {
 	/* initialize "global" variables */
 	entities = make(map[uint64]entity.Entity)
 	players = make(map[uint64]*player.Player)
+	jsonPlayers = make(map[string]*player.Player)
 	entityID = uint64(protocol.GenerateEntityID)
 	entityIDMutex = &sync.Mutex{}
 	/*********************************/
 
 	go loop(debug)
-	bindAndListen(ip, port, debug, quiet, done)
+	bindAndListen(ip, port, debug, quiet, dedicated, done)
 }
 
 func loop(debug bool) {
@@ -90,14 +91,16 @@ func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
 	}
 }
 
-func bindAndListen(ip string, port int, debug bool, quiet bool, done chan bool) {
+func bindAndListen(ip string, port int, debug bool, quiet bool, dedicated bool, done chan bool) {
 	/* bind */
 	binding := ip + ":" + strconv.Itoa(port)
 	listener, err := net.Listen("tcp", binding)
 	if err != nil {
 		panic(err)
 	}
-	done <- true
+	if !dedicated {
+		done <- true
+	}
 	/*********/
 
 	/* continuously accept connections */
@@ -143,6 +146,7 @@ func bindAndListen(ip string, port int, debug bool, quiet bool, done chan bool) 
 		}
 		// successful handshake! add the connection and the player
 		players[p.GetID()] = p
+		jsonPlayers[strconv.FormatUint(p.GetID(), 10)] = p
 		entities[p.GetID()] = p
 		connections = append(connections, conn)
 		go listenTo(reader, conn, debug)
@@ -185,20 +189,12 @@ func moveLocal(conn net.Conn, msg string, contents string, start bool) {
 }
 
 func generateBroadcastString() string {
-	for _, p := range players {
-		bytes, err := json.Marshal(p)
-		if err != nil {
-			panic(err)
-			panic(errors.New("STOP!"))
-		}
-		return string(protocol.UpdatePlayers) + string(bytes) + string(protocol.EndOfMessage)
+	if len(connections) == 0 {
+		return ""
 	}
-	return ""
-//	str, err := json.Marshal(players)
-//	if err != nil {
-//		panic(err)
-//	}
-//	fmt.Println("Broadcast string: %v\n", str)
-//	panic(errors.New("STOP!"))
-//	return string(protocol.UpdatePlayers) + string(str) + string(protocol.EndOfMessage)
+	bytes, err := json.Marshal(jsonPlayers)
+	if err != nil {
+		panic(err)
+	}
+	return string(protocol.UpdatePlayers) + string(bytes) + string(protocol.EndOfMessage)
 }
