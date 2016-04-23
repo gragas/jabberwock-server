@@ -2,6 +2,8 @@ package game
 
 import (
 	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gragas/jabberwock-lib/consts"
 	"github.com/gragas/jabberwock-lib/entity"
@@ -35,6 +37,7 @@ func loop(debug bool) {
 	for {
 		startTime := time.Now()
 		update(debug)
+		broadcast(generateBroadcastString(), debug)
 		endTime := time.Now()
 		elapsedTime := endTime.Sub(startTime)
 		if elapsedTime < consts.TicksPerFrame {
@@ -44,7 +47,15 @@ func loop(debug bool) {
 }
 
 func update(debug bool) {
-	
+	for _, e := range entities {
+		e.Update()
+	}
+}
+
+func broadcast(msg string, debug bool) {
+	for _, c := range connections {
+		fmt.Fprintf(c, msg)
+	}
 }
 
 func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
@@ -52,12 +63,14 @@ func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
 		msg, err := reader.ReadString(byte(protocol.EndOfMessage))
 		if err != nil {
 			fmt.Printf("SERVER: Disconnecting from %v\n", conn.RemoteAddr())
+			// remove the connection
 			for i, c := range connections {
 				if c == conn {
 					connections = append(connections[:i], connections[i+1:]...)
 					break
 				}
 			}
+			// stop listening
 			return
 		}
 		if len(msg) < 2 {
@@ -67,6 +80,10 @@ func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
 		contents := msg[1:len(msg)-1]
 		// augment the state of the game based on this message
 		switch protocol.Code(msg[0]) {
+		case protocol.EntityStartMove:
+			moveLocal(conn, msg, contents, true)
+		case protocol.EntityStopMove:
+			moveLocal(conn, msg, contents, false)
 		default:
 			fmt.Println(contents)
 		}
@@ -141,4 +158,47 @@ func generateEntityID(debug bool) uint64 {
 	}
 	entityIDMutex.Unlock()
 	return entityID
+}
+
+func moveLocal(conn net.Conn, msg string, contents string, start bool) {
+	l := len(contents)
+	if l < 21 {
+		fmt.Printf("SERVER: Received short move msg from %v: %v\n", conn.RemoteAddr(), msg)
+		fmt.Printf("len(contents): %v; contents: %v\n", l, contents)
+		return
+	}
+	id, err := entity.FromIDString(contents[1:])
+	if err != nil {
+		fmt.Printf("SERVER: Received unparseable move msg from %v: %v\n", conn.RemoteAddr(), msg)
+		return
+	}
+	if entities[id] == nil || players[id] == nil {
+		fmt.Printf("SERVER: No such entity or player with id %v\n", id)
+		return
+	}
+	dir := entity.Direction(contents[0])
+	if start {
+		entity.StartMoveLocal(entities[id], dir)
+	} else {
+		entity.StopMoveLocal(entities[id], dir)
+	}
+}
+
+func generateBroadcastString() string {
+	for _, p := range players {
+		bytes, err := json.Marshal(p)
+		if err != nil {
+			panic(err)
+			panic(errors.New("STOP!"))
+		}
+		return string(protocol.UpdatePlayers) + string(bytes) + string(protocol.EndOfMessage)
+	}
+	return ""
+//	str, err := json.Marshal(players)
+//	if err != nil {
+//		panic(err)
+//	}
+//	fmt.Println("Broadcast string: %v\n", str)
+//	panic(errors.New("STOP!"))
+//	return string(protocol.UpdatePlayers) + string(str) + string(protocol.EndOfMessage)
 }
