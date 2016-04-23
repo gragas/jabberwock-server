@@ -26,5 +26,5 @@ func main() {
 		fmt.Printf("SERVER: Starting on \033[0;31m")
 		fmt.Printf("%v\033[0m:\033[0;34m%v\033[0m\n", ip, port)
 	}
-	game.StartGame(ip, port, quiet, debug, make(chan string))
+	game.StartGame(ip, port, quiet, debug, make(chan bool))
 }
