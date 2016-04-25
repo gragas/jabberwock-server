@@ -8,6 +8,7 @@ import (
 	"github.com/gragas/jabberwock-lib/entity"
 	"github.com/gragas/jabberwock-lib/player"
 	"github.com/gragas/jabberwock-lib/protocol"
+	"github.com/gragas/jabberwock-server/serverutils"
 	"net"
 	"strconv"
 	"sync"
@@ -40,9 +41,10 @@ func loop(debug bool) {
 		update(debug)
 		broadcast(generateBroadcastString(), debug)
 		endTime := time.Now()
-		elapsedTime := endTime.Sub(startTime)
-		if elapsedTime < consts.TicksPerFrame {
-			time.Sleep(consts.TicksPerFrame - elapsedTime)
+		serverutils.ElapsedTime = endTime.Sub(startTime)
+		serverutils.Delta = float32(serverutils.ElapsedTime) * 0.001
+		if serverutils.ElapsedTime < consts.TicksPerFrame {
+			time.Sleep(consts.TicksPerFrame - serverutils.ElapsedTime)
 		}
 	}
 }
