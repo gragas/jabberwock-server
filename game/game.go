@@ -131,10 +131,20 @@ func bindAndListen(ip string, port int, debug bool, quiet bool, dedicated bool, 
 		err = p.FromBytes([]byte(contents))
 		if err != nil {
 			fmt.Printf("SERVER: Could not unmarshall player from new client (%v).\n", conn.RemoteAddr())
+			fmt.Fprintf(conn, "SERVER ERROR: Cannot unmarshal player from client." + string(protocol.EndOfMessage))
 			continue
 		}
 		// success! generate an id for the player and handshake the newly connected client!
 		p.SetID(generateEntityID(debug))
+		fmt.Println(p.GetID())
+		marshalledPlayer := p.String()
+		unmarshalledPlayer := new(player.Player)
+		unmarshalledPlayer.FromBytes([]byte(marshalledPlayer))
+		if *unmarshalledPlayer != *p {
+			fmt.Printf("SERVER ERROR: Marshalled and unmarshalled players do not match\n")
+			fmt.Fprintf(conn, "SERVER ERROR: Cannot register client." + string(protocol.EndOfMessage))
+			continue
+		}
 		fmt.Fprintf(conn, string(protocol.Success) + p.String() + string(protocol.EndOfMessage))
 		// make sure that the client is on the same page...
 		msg, err = reader.ReadString(byte(protocol.EndOfMessage))
