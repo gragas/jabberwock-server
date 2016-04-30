@@ -17,9 +17,12 @@ import (
 
 var entityID uint64
 var entityIDMutex *sync.Mutex
+var updateCond  *sync.Cond
+var modifyingEntities, updatingEntities bool
 var entities map[uint64]entity.Entity
 var players map[uint64]*player.Player
 var jsonPlayers map[string]*player.Player
+var readersToPlayers map[*bufio.Reader]*player.Player
 var connections []net.Conn
 
 func StartGame(ip string, port int, quiet bool, debug bool, dedicated bool, done chan bool) {
@@ -27,8 +30,11 @@ func StartGame(ip string, port int, quiet bool, debug bool, dedicated bool, done
 	entities = make(map[uint64]entity.Entity)
 	players = make(map[uint64]*player.Player)
 	jsonPlayers = make(map[string]*player.Player)
+	readersToPlayers = make(map[*bufio.Reader]*player.Player)
 	entityID = uint64(protocol.GenerateEntityID)
-	entityIDMutex = &sync.Mutex{}
+	entityIDMutex = new(sync.Mutex)
+	updateCond = sync.NewCond(&sync.Mutex{})
+	updatingEntities = true
 	/*********************************/
 
 	go loop(debug)
@@ -50,9 +56,17 @@ func loop(debug bool) {
 }
 
 func update(debug bool) {
+	updateCond.L.Lock()
+	for modifyingEntities { updateCond.Wait() }
+	updatingEntities = true
+	
 	for _, e := range entities {
 		e.Update()
 	}
+	
+	updatingEntities = false
+	updateCond.L.Unlock()
+	updateCond.Signal()
 }
 
 func broadcast(msg string, debug bool) {
@@ -69,7 +83,25 @@ func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
 			// remove the connection
 			for i, c := range connections {
 				if c == conn {
+					updateCond.L.Lock()
+					for updatingEntities { updateCond.Wait() }
+					modifyingEntities = true
+					fmt.Println("Modifying entities...")
+
+					p := readersToPlayers[reader]
+					if p != nil {
+						delete(players, p.GetID())
+						delete(jsonPlayers, strconv.FormatUint(p.GetID(), 10))
+						delete(entities, p.GetID())
+						delete(readersToPlayers, reader)
+					}
 					connections = append(connections[:i], connections[i+1:]...)
+					broadcast(string(protocol.Disconnect) + strconv.FormatUint(p.GetID(), 10) + string(protocol.EndOfMessage), debug)
+					
+					modifyingEntities = false
+					updateCond.L.Unlock()
+					updateCond.Signal()
+					fmt.Println("Unlocked and signalled...")
 					break
 				}
 			}
@@ -160,6 +192,7 @@ func bindAndListen(ip string, port int, debug bool, quiet bool, dedicated bool, 
 		players[p.GetID()] = p
 		jsonPlayers[strconv.FormatUint(p.GetID(), 10)] = p
 		entities[p.GetID()] = p
+		readersToPlayers[reader] = p
 		connections = append(connections, conn)
 		go listenTo(reader, conn, debug)
 	}
