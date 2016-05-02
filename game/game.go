@@ -86,7 +86,6 @@ func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
 					updateCond.L.Lock()
 					for updatingEntities { updateCond.Wait() }
 					modifyingEntities = true
-					fmt.Println("Modifying entities...")
 
 					p := readersToPlayers[reader]
 					if p != nil {
@@ -101,7 +100,6 @@ func listenTo(reader *bufio.Reader, conn net.Conn, debug bool) {
 					modifyingEntities = false
 					updateCond.L.Unlock()
 					updateCond.Signal()
-					fmt.Println("Unlocked and signalled...")
 					break
 				}
 			}
@@ -168,7 +166,6 @@ func bindAndListen(ip string, port int, debug bool, quiet bool, dedicated bool, 
 		}
 		// success! generate an id for the player and handshake the newly connected client!
 		p.SetID(generateEntityID(debug))
-		fmt.Println(p.GetID())
 		marshalledPlayer := p.String()
 		unmarshalledPlayer := new(player.Player)
 		unmarshalledPlayer.FromBytes([]byte(marshalledPlayer))
